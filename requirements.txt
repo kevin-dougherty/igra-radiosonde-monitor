@@ -1,0 +1,14 @@
+# Dashboard
+dash==2.18.2
+dash-bootstrap-components==1.6.0
+plotly==5.24.1
+
+# Data / ingestion
+pandas>=2.2
+numpy>=1.26
+requests>=2.32
+siphon>=0.9
+duckdb>=0.10
+
+# Progress bar for ingest
+tqdm>=4.66

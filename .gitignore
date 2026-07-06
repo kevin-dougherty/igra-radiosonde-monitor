@@ -1,0 +1,20 @@
+# Database and data files
+data/
+conf/
+
+# Python environment
+igra_env/
+__pycache__/
+*.pyc
+*.pyo
+
+# Jupyter
+.ipynb_checkpoints/
+*.ipynb
+
+# OS
+.DS_Store
+
+# Test outputs
+*.html
+output.txt
