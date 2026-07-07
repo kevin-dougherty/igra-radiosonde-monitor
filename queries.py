@@ -6,9 +6,8 @@ DB_PATH = Path("data/igra.duckdb")
 
 def get_connection():
     con = duckdb.connect(str(DB_PATH), read_only=True)
-    # Limit memory usage for Render free tier (512MB RAM)
     con.execute("SET memory_limit='400MB'")
-    con.execute("SET threads=1")
+    con.execute("SET threads=2")
     return con
 
 def daily_launch_counts() -> pd.DataFrame:
@@ -16,7 +15,7 @@ def daily_launch_counts() -> pd.DataFrame:
     return con.execute("""
         SELECT
             DATE_TRUNC('day', timezone('UTC', time)) AS date,
-            COUNT(DISTINCT station || CAST(timezone('UTC', time) AS TEXT)) AS total_launches,
+            COUNT(*) AS total_launches,
             COUNT(DISTINCT station) AS stations_reporting
         FROM soundings
         WHERE time >= '2025-01-01'
@@ -25,7 +24,6 @@ def daily_launch_counts() -> pd.DataFrame:
     """).df()
 
 def station_names() -> pd.DataFrame:
-    """Return station_id → display_name mapping from metadata table."""
     con = get_connection()
     try:
         return con.execute("""
@@ -44,10 +42,10 @@ def station_summary() -> pd.DataFrame:
             COALESCE(m.display_name, s.station) || ' (' || s.station || ')' AS label,
             MIN(s.lat) AS lat,
             MIN(s.lon) AS lon,
-            COUNT(DISTINCT s.station || CAST(timezone('UTC', s.time) AS TEXT)) AS total_launches,
+            COUNT(*) AS total_launches,
             MIN(DATE_TRUNC('day', s.time)) AS first_launch,
             MAX(DATE_TRUNC('day', s.time)) AS last_launch,
-            (COUNT(DISTINCT s.station || CAST(timezone('UTC', s.time) AS TEXT)) /
+            (COUNT(*) /
              NULLIF(DATEDIFF('day', MIN(s.time), MAX(s.time)) * 2.0, 0)) * 100 AS reporting_rate
         FROM soundings s
         LEFT JOIN station_meta m ON s.station = m.station_id
@@ -63,9 +61,9 @@ def station_reporting() -> pd.DataFrame:
             COALESCE(m.display_name, s.station) AS display_name,
             MIN(s.lat) AS lat,
             MIN(s.lon) AS lon,
-            COUNT(DISTINCT s.station || CAST(timezone('UTC', s.time) AS TEXT)) AS total_launches,
+            COUNT(*) AS total_launches,
             MAX(DATE_TRUNC('day', s.time)) AS last_launch,
-            (COUNT(DISTINCT s.station || CAST(timezone('UTC', s.time) AS TEXT)) /
+            (COUNT(*) /
              NULLIF(DATEDIFF('day', '2025-01-01', CURRENT_DATE) * 2.0, 0)) * 100 AS reporting_rate
         FROM soundings s
         LEFT JOIN station_meta m ON s.station = m.station_id
@@ -77,18 +75,17 @@ def station_reporting() -> pd.DataFrame:
 def launch_delta(window_days: int = 60) -> pd.DataFrame:
     con = get_connection()
     return con.execute(f"""
-        SELECT *,
-               post_cut - pre_cut AS delta
+        SELECT *, post_cut - pre_cut AS delta
         FROM (
             SELECT
                 s.station,
                 COALESCE(m.display_name, s.station) AS display_name,
                 COALESCE(m.display_name, s.station) || ' (' || s.station || ')' AS label,
-                COUNT(DISTINCT CAST(timezone('UTC', s.time) AS TEXT)) FILTER (
+                COUNT(*) FILTER (
                     WHERE s.time >= '2025-03-01'::DATE - INTERVAL '{window_days} days'
                       AND s.time <  '2025-03-01'
                 ) AS pre_cut,
-                COUNT(DISTINCT CAST(timezone('UTC', s.time) AS TEXT)) FILTER (
+                COUNT(*) FILTER (
                     WHERE s.time >= '2025-03-01'
                       AND s.time <  '2025-03-01'::DATE + INTERVAL '{window_days} days'
                 ) AS post_cut
@@ -164,9 +161,9 @@ def main() -> None:
     print(daily_launch_counts().head())
     print("\nStation summary:")
     print(station_summary().head())
-    print("\nStations with largest change (60d before vs after):")
+    print("\nLaunch delta:")
     print(launch_delta().head(10))
-    print("\nStation reporting since 2025-01-01:")
+    print("\nStation reporting:")
     print(station_reporting().head())
 
 if __name__ == "__main__":

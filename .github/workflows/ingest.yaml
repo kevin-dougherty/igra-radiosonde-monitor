@@ -50,7 +50,8 @@ jobs:
             --start-year 2025 \
             --start-month 1 \
             --db data/igra.duckdb \
-            --workers 4
+            --workers 4 \
+            --mode launches
 
       - name: Load station metadata
         run: python load_metadata.py --db data/igra.duckdb
