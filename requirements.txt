@@ -12,3 +12,8 @@ duckdb>=0.10
 
 # Progress bar for ingest
 tqdm>=4.66
+
+# Deployment
+gunicorn>=21
+awscli>=1.32
+

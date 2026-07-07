@@ -1,6 +1,5 @@
 # Database and data files
 data/
-conf/
 
 # Python environment
 igra_env/

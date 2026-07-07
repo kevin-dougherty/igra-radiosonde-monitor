@@ -1,0 +1,62 @@
+name: IGRA Ingest
+
+on:
+  schedule:
+    - cron: '30 1 * * *'   # 01:30 UTC — after 00Z launches
+    - cron: '30 13 * * *'  # 13:30 UTC — after 12Z launches
+  workflow_dispatch:        # allows manual trigger from GitHub UI
+
+jobs:
+  ingest:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Cache pip dependencies
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/pip
+          key: ${{ runner.os }}-pip-${{ hashFiles('requirements.txt') }}
+          restore-keys: |
+            ${{ runner.os }}-pip-
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Download existing database from R2
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          AWS_DEFAULT_REGION: auto
+        run: |
+          pip install awscli
+          mkdir -p data
+          aws s3 cp s3://igra-database/igra.duckdb data/igra.duckdb \
+            --endpoint-url ${{ secrets.R2_ENDPOINT_URL }} || echo "No existing DB found, starting fresh"
+
+      - name: Run ingest
+        run: |
+          python ingest.py \
+            --stations-file conf/stations_us.txt \
+            --start-year 2025 \
+            --start-month 1 \
+            --db data/igra.duckdb \
+            --workers 4
+
+      - name: Upload updated database to R2
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          AWS_DEFAULT_REGION: auto
+        run: |
+          aws s3 cp data/igra.duckdb s3://igra-database/igra.duckdb \
+            --endpoint-url ${{ secrets.R2_ENDPOINT_URL }}
+          echo "Upload complete"
+
