@@ -52,9 +52,9 @@ def load_metadata(db_path: str = "data/igra.duckdb") -> None:
 
     # Build display name
     def make_display(row):
-        city  = row["city"].strip()
-        state = row["state"].strip()
-        if state and state.lower() != "nan":
+        city  = str(row["city"]).strip()
+        state = str(row["state"]).strip()
+        if state and state.lower() not in ("nan", "none", ""):
             return f"{city}, {state}"
         return city
 
