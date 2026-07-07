@@ -15,8 +15,8 @@ import queries
 
 # ── Constants ─────────────────────────────────────────────────────────────────
 
-BUDGET_CUT_DATE = "2025-03-01"
-BUDGET_CUT_TS   = pd.Timestamp(BUDGET_CUT_DATE, tz="UTC")
+IMPACT_DATE = "2025-03-01"
+IMPACT_TS   = pd.Timestamp(IMPACT_DATE, tz="UTC")
 
 C = {
     "bg":      "#0D1117",
@@ -113,7 +113,7 @@ app.layout = html.Div([
         # Alert banner
         html.Div([
             "The data below shows the impact on the US radiosonde network since impacts occuring on ",
-            html.Strong(BUDGET_CUT_DATE),
+            html.Strong(IMPACT_DATE),
             ".",
         ], className="alert-banner"),
 
@@ -133,7 +133,7 @@ app.layout = html.Div([
                         className="nav-tab", selected_className="nav-tab--selected"),
                 dcc.Tab(label="🗺  Station Map",   value="tab-map",
                         className="nav-tab", selected_className="nav-tab--selected"),
-                dcc.Tab(label="✂  Budget Impact", value="tab-budget",
+                dcc.Tab(label="✂  Station Impact", value="tab-impact",
                         className="nav-tab", selected_className="nav-tab--selected"),
                 dcc.Tab(label="📊 Rankings",       value="tab-rankings",
                         className="nav-tab", selected_className="nav-tab--selected"),
@@ -230,14 +230,14 @@ app.layout = html.Div([
         ], style={"display": "none"}),
 
 
-        # Budget Impact
-        html.Div(id="panel-budget", children=[
+        # Station Impact
+        html.Div(id="panel-impact", children=[
             html.Div(
                 "60 days before vs 60 days after 2025-03-01 — equal windows",
                 className="section-header",
             ),
-            graph_card("fig-budget", height=600),
-            html.Div(id="budget-summary",
+            graph_card("fig-impact", height=600),
+            html.Div(id="impact-summary",
                      style={"fontSize": "0.88rem", "color": C["muted"],
                             "marginTop": "10px"}),
         ], style={"display": "none"}),
@@ -268,13 +268,13 @@ app.layout = html.Div([
 @app.callback(
     Output("panel-timeseries", "style"),
     Output("panel-map",        "style"),
-    Output("panel-budget",     "style"),
+    Output("panel-impact",     "style"),
     Output("panel-rankings",   "style"),
     Input("tabs", "value"),
 )
 def show_panel(tab):
     """Show only the active tab panel, hide the rest."""
-    panels = ["tab-timeseries", "tab-map", "tab-budget", "tab-rankings"]
+    panels = ["tab-timeseries", "tab-map", "tab-impact", "tab-rankings"]
     return [
         {"display": "block"} if tab == p else {"display": "none"}
         for p in panels
@@ -296,8 +296,8 @@ def update_kpis(_):
 
         active   = (summary["reporting_rate"] > 50).sum()
         daily["date"] = pd.to_datetime(daily["date"], utc=True)
-        pre_avg  = daily[daily["date"] < BUDGET_CUT_TS]["total_launches"].mean()
-        post_avg = daily[daily["date"] >= BUDGET_CUT_TS]["total_launches"].mean()
+        pre_avg  = daily[daily["date"] < IMPACT_TS]["total_launches"].mean()
+        post_avg = daily[daily["date"] >= IMPACT_TS]["total_launches"].mean()
         drop_pct = ((post_avg - pre_avg) / pre_avg * 100) if pre_avg else 0
         grounded = (delta["post_cut"] == 0).sum()
 
@@ -346,9 +346,9 @@ def update_timeseries(_):
         xmin = df["date"].min()
         xmax = df["date"].max()
 
-        if xmin <= BUDGET_CUT_TS <= xmax:
+        if xmin <= IMPACT_TS <= xmax:
             fig.add_vline(
-                x=BUDGET_CUT_TS.timestamp() * 1000,
+                x=IMPACT_TS.timestamp() * 1000,
                 line=dict(color=C["red"], width=2, dash="dash"),
                 annotation=dict(
                     text="⚠ Impact Date",
@@ -360,7 +360,7 @@ def update_timeseries(_):
                 ),
             )
             fig.add_vrect(
-                x0=BUDGET_CUT_TS,
+                x0=IMPACT_TS,
                 x1=xmax,
                 fillcolor=C["red"],
                 opacity=0.05,
@@ -556,12 +556,12 @@ def update_maps(tab, year, month, day, cycle):
 
 
 @app.callback(
-    Output("fig-budget",     "figure"),
-    Output("budget-summary", "children"),
+    Output("fig-impact",     "figure"),
+    Output("impact-summary", "children"),
     Input("tabs", "value"),
 )
-def update_budget(tab):
-    if tab != "tab-budget":
+def update_impact(tab):
+    if tab != "tab-impact":
         return empty_fig(), ""
     try:
         delta = queries.launch_delta(window_days=60)
@@ -599,7 +599,7 @@ def update_budget(tab):
         silent = (delta["post_cut"] == 0).sum()
         gained = (delta["delta"] > 0).sum()
         summary = (
-            f"60 days before vs 60 days after {BUDGET_CUT_DATE}: "
+            f"60 days before vs 60 days after {IMPACT_DATE}: "
             f"{drops} stations reduced launches, {gained} increased, "
             f"{silent} went completely silent."
         )
