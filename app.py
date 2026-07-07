@@ -700,7 +700,7 @@ def debug():
         "db_path_exists": os.path.exists("data/igra.duckdb"),
     })
 
-ß
+
 # ── Entry point ───────────────────────────────────────────────────────────────
 
 if __name__ == "__main__":
