@@ -67,7 +67,9 @@ def make_dirs() -> None:
 def generate_station_list(overwrite: bool = False) -> tuple[pd.DataFrame, list[str]]:
     """
     Download IGRA station inventory, filter to active US/PR/GU stations,
-    write IDs to conf/stations_us.txt, and return (full_df, station_ids).
+    write IDs to conf/stations_us.txt, and return (us_df, station_ids).
+    us_df is already filtered to just the US stations in station_ids —
+    callers should not need to re-filter it.
     """
     if STATIONS_FILE.exists() and not overwrite:
         print(f"  ↷  {STATIONS_FILE} already exists — loading existing list.")
@@ -78,15 +80,17 @@ def generate_station_list(overwrite: bool = False) -> tuple[pd.DataFrame, list[s
             if ln.strip() and not ln.startswith("#")
         ]
         print(f"  ✓  {len(stations)} stations loaded from existing file.")
-        # Still need full df for metadata — re-download silently
+        # Still need station metadata — re-download silently, then filter
+        # down to just the cached US station IDs (not the full global list)
         try:
             df_full = pd.read_fwf(
                 STATION_LIST_URL, names=COL_NAMES,
                 widths=COL_WIDTHS, skiprows=3,
             )
+            us_df = df_full[df_full["stnid"].astype(str).isin(stations)]
         except Exception:
-            df_full = pd.DataFrame()
-        return df_full, stations
+            us_df = pd.DataFrame(columns=COL_NAMES)
+        return us_df, stations
 
     print(f"  Downloading station list from NCEI...")
     df_full = pd.read_fwf(
@@ -124,7 +128,7 @@ def generate_station_list(overwrite: bool = False) -> tuple[pd.DataFrame, list[s
         for state, count in state_counts.items():
             print(f"    {state or '??':>4}  {count}")
 
-    return df_full, station_ids
+    return us_df, station_ids
 
 
 # ── Step 3: station metadata → DuckDB ────────────────────────────────────────
@@ -154,8 +158,8 @@ def load_station_metadata(df_full: pd.DataFrame) -> None:
 
     # Build display name
     def make_display(row):
-        city  = row["city"].strip()
-        state = row["state"].strip()
+        city  = str(row["city"]).strip()  if not pd.isna(row["city"])  else ""
+        state = str(row["state"]).strip() if not pd.isna(row["state"]) else ""
         if state and state.lower() != "nan":
             return f"{city}, {state}"
         return city

@@ -99,8 +99,19 @@ app.layout = html.Div([
             html.Span("IGRA Radiosonde Monitor",
                       style={"fontSize": "1.2rem", "fontWeight": "700"}),
         ], style={"display": "flex", "alignItems": "center"}),
-        html.Span("NCEI IGRA v2.2  •  2025 US Network Analysis",
-                  style={"color": C["muted"], "fontSize": "0.8rem"}),
+        html.Div([
+            html.Span("NCEI IGRA v2.2  •  2025 US Network Analysis",
+                      style={"color": C["muted"], "fontSize": "0.8rem",
+                             "marginRight": "18px"}),
+            html.A(
+                "View on GitHub ↗",
+                href="https://github.com/kevin-dougherty/igra-radiosonde-monitor",
+                target="_blank",
+                rel="noopener noreferrer",
+                style={"color": C["accent"], "fontSize": "0.8rem",
+                       "textDecoration": "none", "fontWeight": "600"},
+            ),
+        ], style={"display": "flex", "alignItems": "center"}),
     ], style={
         "display": "flex", "justifyContent": "space-between", "alignItems": "center",
         "padding": "14px 28px",
@@ -260,6 +271,24 @@ app.layout = html.Div([
         ], style={"display": "none"}),
 
     ], style={"padding": "24px 28px"}),
+
+    # Footer
+    html.Div([
+        html.Span("Built by Kevin Dougherty", style={"color": C["muted"]}),
+        html.Span("  •  ", style={"color": C["border"]}),
+        html.A(
+            "github.com/kevin-dougherty/igra-radiosonde-monitor",
+            href="https://github.com/kevin-dougherty/igra-radiosonde-monitor",
+            target="_blank",
+            rel="noopener noreferrer",
+            style={"color": C["accent"], "textDecoration": "none"},
+        ),
+    ], style={
+        "textAlign": "center",
+        "padding": "18px 28px 28px",
+        "fontSize": "0.78rem",
+        "borderTop": f"1px solid {C['border']}",
+    }),
 
 ], style={"minHeight": "100vh", "background": C["bg"]})
 
@@ -558,16 +587,18 @@ def update_maps(tab, year, month, day, cycle):
 @app.callback(
     Output("fig-impact",     "figure"),
     Output("impact-summary", "children"),
+    Output("fig-impact",     "style"),
     Input("tabs", "value"),
 )
 def update_impact(tab):
     if tab != "tab-impact":
-        return empty_fig(), ""
+        return empty_fig(), "", {"height": "600px"}
     try:
         delta = queries.launch_delta(window_days=60)
         delta = delta.sort_values("delta")
         colors = [C["red"] if d < 0 else C["green"] for d in delta["delta"]]
 
+        chart_height = max(500, len(delta) * 22)
         fig = go.Figure(go.Bar(
             x=delta["delta"],
             y=delta["label"],
@@ -592,7 +623,7 @@ def update_impact(tab):
             plot_bgcolor=C["surface"],
             font=dict(color=C["text"], family="Inter, Segoe UI, sans-serif", size=13),
             margin=dict(l=260, r=20, t=60, b=50),
-            height=max(500, len(delta) * 22),
+            height=chart_height,
         )
 
         drops  = (delta["delta"] < 0).sum()
@@ -603,10 +634,10 @@ def update_impact(tab):
             f"{drops} stations reduced launches, {gained} increased, "
             f"{silent} went completely silent."
         )
-        return fig, summary
+        return fig, summary, {"height": f"{chart_height}px"}
 
     except Exception as e:
-        return empty_fig(f"Error: {e}"), ""
+        return empty_fig(f"Error: {e}"), "", {"height": "600px"}
 
 
 def _make_station_table(df: pd.DataFrame, ascending: bool) -> html.Table:
