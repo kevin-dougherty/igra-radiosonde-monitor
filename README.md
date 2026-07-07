@@ -1,6 +1,8 @@
 # 📡 IGRA Radiosonde Monitor
 
-> An interactive dashboard tracking the impact of 2025 federal budget cuts on the US upper-air radiosonde network, built with real NOAA IGRA v2.2 data.
+> An interactive dashboard tracking the impact on the US upper-air radiosonde network since early 2025, built with real NOAA IGRA v2.2 data.
+
+See live dashboard here: [https://igra-radiosonde-monitor.onrender.com/](https://igra-radiosonde-monitor.onrender.com/)
 
 ---
 
@@ -8,9 +10,7 @@
 
 Radiosondes are launched twice daily at ~90 stations across the United States. The data they collect (temperature, humidity, wind speed and direction at every pressure level from the surface to the stratosphere) is the backbone of numerical weather prediction. Without it, forecast accuracy can degrade significantly.
 
-In early 2025, federal impacts reduced staffing at National Weather Service offices, resulting in a measurable decline in radiosonde launches across the network. This dashboard quantifies that decline using publicly available data from NOAA's Integrated Global Radiosonde Archive (IGRA v2.2).
-
-**Key finding:** Daily launches dropped from ~170 to ~122 after March 2025 — a 28% reduction — with several stations going completely silent.
+Since early 2025, there has been a decline in radiosonde launches across the network. This dashboard quantifies that decline using publicly available data from NOAA's Integrated Global Radiosonde Archive (IGRA v2.2).
 
 ---
 
@@ -18,9 +18,9 @@ In early 2025, federal impacts reduced staffing at National Weather Service offi
 
 | Tab | What it shows |
 |---|---|
-| **Time Series** | Daily launch counts with 7-day rolling average, budget cut annotation, and shaded post-cut region |
+| **Time Series** | Daily launch counts with 7-day rolling average and a shaded region marking the network impact date |
 | **Station Map** | Green/red launch status by synoptic cycle (00Z or 12Z), selectable by date; reporting rate heatmap |
-| **Budget Impact** | 60-day pre vs post cut comparison per station, sorted by largest decline |
+| **Station Impact** | 60-day comparison per station before and after March 2025, sorted by largest decline |
 | **Rankings** | All stations ranked by reporting rate with top 10 / bottom 10 tables |
 
 **KPI cards** at the top show fleet-level stats at a glance: stations reporting, average daily launches (pre → post), launch reduction %, and stations no longer reporting.
@@ -30,13 +30,20 @@ In early 2025, federal impacts reduced staffing at National Weather Service offi
 ## Project structure
 
 ```
-igra_dashboard/
-├── app.py            # Dash web dashboard — run this
-├── queries.py        # DuckDB SQL query layer
-├── ingest.py         # Data pipeline: NCEI → DuckDB
-├── setup.py          # One-command bootstrap script
+igra-radiosonde-monitor/
+├── app.py                        # Dash web dashboard — run this
+├── queries.py                    # DuckDB SQL query layer
+├── ingest.py                     # Data pipeline: NCEI → DuckDB
+├── load_metadata.py              # Load station metadata
+├── setup.py                      # One-command bootstrap script
+├── start.sh                      # Render start script — pulls DB from R2, then launches gunicorn
+├── .github/
+│   └── workflows/
+│       └── ingest.yaml           # Scheduled ingest (01:30Z / 13:30Z) + Render restart
 ├── assets/
-│   └── style.css     # Dashboard styling
+│   └── style.css                 # Dashboard styling
+├── conf/
+│   └── stations_us.txt           # Station list
 └── requirements.txt
 ```
 
@@ -79,6 +86,27 @@ Open **http://127.0.0.1:8050** in your browser.
 
 ---
 
+## Data modes: launches vs. full profile
+
+`ingest.py` supports two ingest modes via `--mode`:
+
+```bash
+# One row per sounding (default) — fast, dashboard-ready, ~79K rows
+python ingest.py --stations-file conf/stations_us.txt --db data/igra.duckdb --mode launches
+
+# One row per pressure level per sounding — full vertical profile, ~17M rows
+python ingest.py --stations-file conf/stations_us.txt --db data/igra.duckdb --mode full
+```
+
+| Mode | Rows | Use case |
+|---|---|---|
+| `launches` *(default)* | ~79K (one per sounding) | Everything this dashboard needs: launch counts, reporting rates, station status |
+| `full` | ~17M (one per pressure level) | Vertical profile analysis — temperature/humidity/wind by altitude, not currently surfaced in the dashboard but available for future work |
+
+> **Note:** `setup.py` always bootstraps in `launches` mode. To pull full vertical-profile data, run `ingest.py` directly with `--mode full` after the initial setup.
+
+---
+
 ## Tech stack
 
 | Layer | Technology |
@@ -92,7 +120,7 @@ Open **http://127.0.0.1:8050** in your browser.
 
 ### Why DuckDB?
 
-DuckDB is an in-process analytical database — no server required, extremely fast for aggregation queries over millions of rows. The soundings table has ~17M rows (one per pressure level per sounding). All dashboard queries run in milliseconds.
+DuckDB is an in-process analytical database — no server required, extremely fast for aggregation queries over millions of rows. In `launches` mode (the dashboard's default) the `soundings` table holds one row per sounding; switching to `full` mode scales that up to ~17M rows, one per pressure level per sounding, with dashboard queries still running in milliseconds.
 
 ### Why Dash over Streamlit?
 
@@ -105,25 +133,40 @@ Dash apps are Flask under the hood, making them straightforward to deploy on any
 **Daily launch counts:**
 ```sql
 SELECT
-    DATE_TRUNC('day', time) AS date,
-    COUNT(DISTINCT station || '|' || CAST(time AS TEXT)) AS total_launches,
+    DATE_TRUNC('day', timezone('UTC', time)) AS date,
+    COUNT(*) AS total_launches,
     COUNT(DISTINCT station) AS stations_reporting
 FROM soundings
 WHERE time >= '2025-01-01'
-GROUP BY date
-ORDER BY date
+GROUP BY 1
+ORDER BY 1
 ```
 
-**Pre vs post budget cut comparison (equal 60-day windows):**
+**Station impact — equal 60-day windows before/after the network impact date:**
 ```sql
-SELECT station,
-    COUNT(DISTINCT CAST(time AS TEXT))
-        FILTER (WHERE time >= '2025-01-01' AND time < '2025-03-01') AS pre_cut,
-    COUNT(DISTINCT CAST(time AS TEXT))
-        FILTER (WHERE time >= '2025-03-01' AND time < '2025-05-01') AS post_cut
+SELECT
+    station,
+    COUNT(*) FILTER (
+        WHERE time >= '2025-03-01'::DATE - INTERVAL '60 days'
+          AND time <  '2025-03-01'
+    ) AS pre_cut,
+    COUNT(*) FILTER (
+        WHERE time >= '2025-03-01'
+          AND time <  '2025-03-01'::DATE + INTERVAL '60 days'
+    ) AS post_cut
 FROM soundings
 GROUP BY station
 ORDER BY post_cut - pre_cut
+```
+
+**Station reporting rate — fixed window anchored to the monitoring start date, so every station is measured on the same scale:**
+```sql
+SELECT
+    station,
+    COUNT(*) / NULLIF(DATEDIFF('day', '2025-01-01', CURRENT_DATE) * 2.0, 0) * 100 AS reporting_rate
+FROM soundings
+WHERE time >= '2025-01-01'
+GROUP BY station
 ```
 
 ---
@@ -139,11 +182,11 @@ Data is fetched from the data-y2d directory (year-to-date files), updated daily 
 
 ## Deployment
 
-The app is designed to be deployed with a scheduled ingest job that updates the database twice daily (after 00Z and 12Z synoptic hours):
+The app runs on a scheduled ingest job that updates the database twice daily (after 00Z and 12Z synoptic hours), then restarts the live dashboard so it picks up the fresh data:
 
 - **Web host:** Render (Flask/gunicorn)
 - **Database storage:** Cloudflare R2 (S3-compatible, zero egress fees)
-- **Scheduled ingest:** GitHub Actions cron (free for public repos)
+- **Scheduled ingest:** GitHub Actions cron (free for public repos), which uploads the refreshed database to R2 and then calls Render's restart API so the running service re-downloads it — no full rebuild needed
 
 ```bash
 # Start command for Render
@@ -155,4 +198,5 @@ gunicorn app:server
 ## Author
 
 Kevin Dougherty
+
 Built as a portfolio project demonstrating data engineering, SQL, and interactive visualization skills.
