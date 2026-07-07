@@ -66,3 +66,9 @@ jobs:
             --endpoint-url ${{ secrets.R2_ENDPOINT_URL }}
           echo "Upload complete"
 
+      - name: Restart Render service to pick up new database
+        run: |
+          curl -X POST "https://api.render.com/v1/services/${{ secrets.RENDER_SERVICE_ID }}/restart" \
+            -H "Authorization: Bearer ${{ secrets.RENDER_API_KEY }}" \
+            -H "Accept: application/json"
+
