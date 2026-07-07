@@ -30,13 +30,15 @@ jobs:
       - name: Install dependencies
         run: pip install -r requirements.txt
 
+      - name: Install AWS CLI
+        run: pip install awscli
+
       - name: Download existing database from R2
         env:
           AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
           AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
           AWS_DEFAULT_REGION: auto
         run: |
-          pip install awscli
           mkdir -p data
           aws s3 cp s3://igra-database/igra.duckdb data/igra.duckdb \
             --endpoint-url ${{ secrets.R2_ENDPOINT_URL }} || echo "No existing DB found, starting fresh"
@@ -49,6 +51,9 @@ jobs:
             --start-month 1 \
             --db data/igra.duckdb \
             --workers 4
+
+      - name: Load station metadata
+        run: python load_metadata.py --db data/igra.duckdb
 
       - name: Upload updated database to R2
         env:
