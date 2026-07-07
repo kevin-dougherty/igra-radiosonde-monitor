@@ -291,7 +291,7 @@ def show_panel(tab):
 def update_kpis(_):
     try:
         daily   = queries.daily_launch_counts()
-        summary = queries.station_summary()
+        summary = queries.station_reporting()
         delta   = queries.launch_delta()
 
         active   = (summary["reporting_rate"] > 50).sum()
@@ -641,17 +641,19 @@ def _make_station_table(df: pd.DataFrame, ascending: bool) -> html.Table:
     Output("fig-rankings",   "figure"),
     Output("table-top10",    "children"),
     Output("table-bottom10", "children"),
+    Output("fig-rankings",   "style"),
     Input("tabs", "value"),
 )
 def update_rankings(tab):
     if tab != "tab-rankings":
-        return empty_fig(), "", ""
+        return empty_fig(), "", "", {"height": "600px"}
     try:
-        summary = queries.station_summary().sort_values("reporting_rate")
+        summary = queries.station_reporting().sort_values("reporting_rate")
         colors = [
             C["red"] if p < 50 else C["yellow"] if p < 85 else C["green"]
             for p in summary["reporting_rate"]
         ]
+        chart_height = max(500, len(summary) * 22)
         fig = go.Figure(go.Bar(
             x=summary["reporting_rate"],
             y=summary["label"],
@@ -669,14 +671,14 @@ def update_rankings(tab):
             plot_bgcolor=C["surface"],
             font=dict(color=C["text"], family="Inter, Segoe UI, sans-serif", size=13),
             margin=dict(l=260, r=20, t=60, b=50),
-            height=max(500, len(summary) * 22),
+            height=chart_height,
         )
         top_table    = _make_station_table(summary, ascending=False)
         bottom_table = _make_station_table(summary, ascending=True)
-        return fig, top_table, bottom_table
+        return fig, top_table, bottom_table, {"height": f"{chart_height}px"}
 
     except Exception as e:
-        return empty_fig(f"Error: {e}"), "", ""
+        return empty_fig(f"Error: {e}"), "", "", {"height": "600px"}
 
 
 # Temporary debug route — remove after confirming versions

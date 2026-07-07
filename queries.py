@@ -59,6 +59,7 @@ def station_reporting() -> pd.DataFrame:
         SELECT
             s.station,
             COALESCE(m.display_name, s.station) AS display_name,
+            COALESCE(m.display_name, s.station) || ' (' || s.station || ')' AS label,
             MIN(s.lat) AS lat,
             MIN(s.lon) AS lon,
             COUNT(*) AS total_launches,
