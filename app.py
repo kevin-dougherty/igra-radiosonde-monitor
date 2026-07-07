@@ -679,6 +679,28 @@ def update_rankings(tab):
         return empty_fig(f"Error: {e}"), "", ""
 
 
+# Temporary debug route — remove after confirming versions
+from flask import jsonify
+@server.route("/debug")
+def debug():
+    import plotly, dash, duckdb, os
+    try:
+        con = duckdb.connect("data/igra.duckdb", read_only=True)
+        row_count = con.execute("SELECT COUNT(*) FROM soundings").fetchone()[0]
+        con.close()
+        db_status = f"{row_count:,} rows"
+    except Exception as e:
+        db_status = f"ERROR: {e}"
+    return jsonify({
+        "plotly": plotly.__version__,
+        "dash": dash.__version__,
+        "duckdb": duckdb.__version__,
+        "db": db_status,
+        "cwd": os.getcwd(),
+        "db_path_exists": os.path.exists("data/igra.duckdb"),
+    })
+
+ß
 # ── Entry point ───────────────────────────────────────────────────────────────
 
 if __name__ == "__main__":
