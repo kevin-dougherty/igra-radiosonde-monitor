@@ -248,18 +248,11 @@ app.layout = html.Div([
                 ], md=2),
             ], className="mb-3"),
 
-            # Maps
-            dbc.Row([
-                dbc.Col([
-                    html.Div(id="map-status-header", className="section-header",
-                             children="Launch Status"),
-                    graph_card("fig-map-status", height=480),
-                ], md=6),
-                dbc.Col([
-                    html.Div("Reporting Rate since 2025-01-01",
-                             className="section-header"),
-                    graph_card("fig-map-heat", height=480),
-                ], md=6),
+            # Map
+            html.Div([
+                html.Div(id="map-status-header", className="section-header",
+                         children="Launch Status"),
+                graph_card("fig-map-status", height=560),
             ]),
         ], style={"display": "none"}),
 
@@ -293,13 +286,47 @@ app.layout = html.Div([
             ]),
         ], style={"display": "none"}),
 
-        # Reporting Rate (by cycle x window)
+        # Reporting Rate (map, toggle by cycle x window)
         html.Div(id="panel-cycles", children=[
-            html.Div(
-                "Network-wide reporting rate by launch cycle, across rolling windows",
-                className="section-header",
-            ),
-            graph_card("fig-cycles", height=380),
+            html.Div("Launch reporting rate by cycle and window", className="section-header"),
+            dbc.Row([
+                dbc.Col([
+                    html.Label("Cycle", style={"fontSize": "0.78rem",
+                               "color": C["muted"], "marginBottom": "4px",
+                               "display": "block"}),
+                    dcc.Dropdown(
+                        id="rr-cycle",
+                        options=[
+                            {"label": "All cycles (combined)", "value": "all"},
+                            {"label": "00Z", "value": "0"},
+                            {"label": "06Z", "value": "6"},
+                            {"label": "12Z", "value": "12"},
+                            {"label": "18Z", "value": "18"},
+                        ],
+                        value="all",
+                        clearable=False,
+                        style={"fontSize": "0.85rem"},
+                    ),
+                ], md=3),
+                dbc.Col([
+                    html.Label("Window", style={"fontSize": "0.78rem",
+                               "color": C["muted"], "marginBottom": "4px",
+                               "display": "block"}),
+                    dcc.Dropdown(
+                        id="rr-window",
+                        options=[
+                            {"label": "3 Month",  "value": "90"},
+                            {"label": "6 Month",  "value": "180"},
+                            {"label": "1 Year",   "value": "365"},
+                            {"label": "Total (since 2025-01-01)", "value": "total"},
+                        ],
+                        value="total",
+                        clearable=False,
+                        style={"fontSize": "0.85rem"},
+                    ),
+                ], md=3),
+            ], className="mb-3"),
+            graph_card("fig-cycles", height=560),
         ], style={"display": "none"}),
 
     ], style={"padding": "24px 28px"}),
@@ -535,7 +562,6 @@ def update_day_options(year, month):
 
 @app.callback(
     Output("fig-map-status",   "figure"),
-    Output("fig-map-heat",     "figure"),
     Output("map-status-header","children"),
     Input("tabs",      "value"),
     Input("map-year",  "value"),
@@ -545,7 +571,7 @@ def update_day_options(year, month):
 )
 def update_maps(tab, year, month, day, cycle):
     if tab != "tab-map":
-        return empty_fig(), empty_fig(), "Launch Status"
+        return empty_fig(), "Launch Status"
 
     geo_layout = dict(
         scope="usa",
@@ -564,7 +590,7 @@ def update_maps(tab, year, month, day, cycle):
             df = queries.launch_status_for_cycle(
                 int(year), int(month), int(day), int(cycle)
             )
-            cycle_label = f"{'00Z' if int(cycle) == 0 else '12Z'}"
+            cycle_label = f"{int(cycle):02d}Z"
             month_name = ["January","February","March","April","May","June",
                           "July","August","September","October","November",
                           "December"][int(month)-1]
@@ -596,52 +622,17 @@ def update_maps(tab, year, month, day, cycle):
             geo=geo_layout,
             paper_bgcolor=C["bg"],
             font=dict(color=C["text"]),
-            height=480,
+            height=560,
             title=dict(text=header, font=dict(size=14, weight=700)),
             legend=dict(bgcolor=C["surface"], bordercolor=C["border"],
                         borderwidth=1, font=dict(color=C["text"])),
             margin=dict(l=0, r=0, t=50, b=0),
         )
 
-        # ── Reporting rate heatmap ────────────────────────────────────────
-        comp = queries.station_reporting()
-        heat_fig = go.Figure(go.Scattergeo(
-            lat=comp["lat"],
-            lon=comp["lon"],
-            mode="markers",
-            marker=dict(
-                size=8,
-                color=comp["reporting_rate"],
-                colorscale=[[0, C["red"]], [0.5, C["yellow"]], [1.0, C["green"]]],
-                cmin=0, cmax=100,
-                colorbar=dict(
-                    title=dict(text="Reporting Rate %",
-                               font=dict(color=C["text"])),
-                    tickfont=dict(color=C["text"]),
-                ),
-            ),
-            text=comp["display_name"],
-            customdata=comp[["reporting_rate", "total_launches"]].values,
-            hovertemplate=(
-                "<b>%{text}</b><br>"
-                "Reporting rate: %{customdata[0]:.1f}%<br>"
-                "Total launches: %{customdata[1]}<extra></extra>"
-            ),
-        ))
-        heat_fig.update_layout(
-            geo=geo_layout,
-            paper_bgcolor=C["bg"],
-            font=dict(color=C["text"]),
-            height=480,
-            title=dict(text="Launch Reporting Rate since 2025-01-01",
-                       font=dict(size=14, weight=700)),
-            margin=dict(l=0, r=0, t=50, b=0),
-        )
-
-        return status_fig, heat_fig, header
+        return status_fig, header
 
     except Exception as e:
-        return empty_fig(f"Error: {e}"), empty_fig(f"Error: {e}"), "Error"
+        return empty_fig(f"Error: {e}"), "Error"
 
 
 @app.callback(
@@ -775,39 +766,65 @@ def update_rankings(tab):
 @app.callback(
     Output("fig-cycles", "figure"),
     Input("tabs", "value"),
+    Input("rr-cycle", "value"),
+    Input("rr-window", "value"),
 )
-def update_cycles(tab):
+def update_cycles(tab, cycle, window):
     if tab != "tab-cycles":
         return empty_fig()
     try:
-        df = queries.network_reporting_by_cycle_window()
+        selected_cycle  = None if cycle in (None, "all") else cycle
+        window_days     = None if window in (None, "total") else int(window)
 
-        window_order = ["3 Month", "6 Month", "1 Year", "Total"]
-        cycle_order  = ["00Z", "06Z", "12Z", "18Z"]
-        pivot = df.pivot(index="cycle", columns="window", values="reporting_rate")
-        pivot = pivot.reindex(index=cycle_order, columns=window_order)
+        df = queries.station_reporting_by_cycle_window(
+            cycle=selected_cycle, window_days=window_days
+        )
+        df = df.dropna(subset=["lat", "lon"])
 
-        fig = go.Figure(go.Heatmap(
-            z=pivot.values,
-            x=pivot.columns,
-            y=pivot.index,
-            colorscale=[[0, C["red"]], [0.5, C["yellow"]], [1, C["green"]]],
-            zmin=0, zmax=100,
-            text=[[f"{v:.1f}%" for v in row] for row in pivot.values],
-            texttemplate="%{text}",
-            textfont=dict(size=15, color=C["bg"]),
-            hovertemplate="<b>%{y} — %{x}</b><br>Reporting rate: %{z:.1f}%<extra></extra>",
-            colorbar=dict(title="Rate %", tickfont=dict(color=C["text"])),
+        cycle_label  = "All Cycles Combined" if selected_cycle is None else f"{int(selected_cycle):02d}Z"
+        window_label = {
+            "90": "3 Month", "180": "6 Month", "365": "1 Year",
+        }.get(window, "Total (since 2025-01-01)")
+
+        fig = go.Figure(go.Scattergeo(
+            lat=df["lat"],
+            lon=df["lon"],
+            mode="markers",
+            marker=dict(
+                size=9,
+                color=df["reporting_rate"],
+                colorscale=[[0, C["red"]], [0.5, C["yellow"]], [1.0, C["green"]]],
+                cmin=0, cmax=100,
+                colorbar=dict(
+                    title=dict(text="Reporting Rate %", font=dict(color=C["text"])),
+                    tickfont=dict(color=C["text"]),
+                ),
+            ),
+            text=df["display_name"],
+            customdata=df[["reporting_rate", "total_launches"]].values,
+            hovertemplate=(
+                "<b>%{text}</b><br>"
+                "Reporting rate: %{customdata[0]:.1f}%<br>"
+                "Launches: %{customdata[1]}<extra></extra>"
+            ),
         ))
         fig.update_layout(
-            title=dict(text="Network Reporting Rate by Cycle and Window",
-                       font=dict(size=16, weight=700)),
-            xaxis=dict(side="top", gridcolor=C["border"]),
-            yaxis=dict(gridcolor=C["border"], autorange="reversed"),
+            geo=dict(
+                scope="usa",
+                projection_type="albers usa",
+                showland=True,
+                landcolor=C["surface"],
+                showocean=True,
+                oceancolor=C["bg"],
+                showlakes=False,
+                bgcolor=C["bg"],
+            ),
             paper_bgcolor=C["bg"],
-            plot_bgcolor=C["surface"],
-            font=dict(color=C["text"], family="Inter, Segoe UI, sans-serif", size=13),
-            margin=dict(l=70, r=20, t=80, b=20),
+            font=dict(color=C["text"]),
+            height=560,
+            title=dict(text=f"Reporting Rate — {cycle_label} — {window_label}",
+                       font=dict(size=15, weight=700)),
+            margin=dict(l=0, r=0, t=50, b=0),
         )
         return fig
 

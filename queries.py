@@ -177,6 +177,47 @@ def launch_status_for_cycle(year: int, month: int, day: int, hour: int) -> pd.Da
     all_stations["launched"] = all_stations["station"].isin(launched["station"])
     return all_stations
 
+def station_reporting_by_cycle_window(cycle=None, window_days=None) -> pd.DataFrame:
+    """
+    Per-station reporting rate for a given synoptic cycle and rolling window,
+    for use in the Reporting Rate map. Every station in station_meta is
+    included even if it has zero matching launches (shows as 0%), and lat/lon
+    are pulled from the station's full launch history so it still plots even
+    when the selected cycle/window has no data for it.
+    """
+    con = get_connection()
+    hour = _cycle_to_hour(cycle)
+    expected_per_day = 1.0 if hour is not None else 2.0
+    hour_filter = "AND EXTRACT(hour FROM timezone('UTC', s.time)) = ?" if hour is not None else ""
+    params = [hour] if hour is not None else []
+    start_expr = "'2025-01-01'" if window_days is None else f"CURRENT_DATE - INTERVAL '{window_days} days'"
+
+    query = f"""
+        SELECT
+            m.station_id AS station,
+            m.display_name AS display_name,
+            m.display_name || ' (' || m.station_id || ')' AS label,
+            loc.lat, loc.lon,
+            COALESCE(c.total_launches, 0) AS total_launches,
+            (COALESCE(c.total_launches, 0) /
+             NULLIF(GREATEST(DATEDIFF('day', {start_expr}, CURRENT_DATE), 1) * {expected_per_day}, 0)
+            ) * 100 AS reporting_rate
+        FROM station_meta m
+        LEFT JOIN (
+            SELECT station, MIN(lat) AS lat, MIN(lon) AS lon
+            FROM soundings GROUP BY station
+        ) loc ON loc.station = m.station_id
+        LEFT JOIN (
+            SELECT station, COUNT(*) AS total_launches
+            FROM soundings s
+            WHERE timezone('UTC', s.time) >= {start_expr}
+            {hour_filter}
+            GROUP BY station
+        ) c ON c.station = m.station_id
+        ORDER BY reporting_rate DESC
+    """
+    return con.execute(query, params).df()
+
 def network_reporting_by_cycle_window() -> pd.DataFrame:
     """
     Network-wide reporting rate for each synoptic cycle (00Z/06Z/12Z/18Z),
