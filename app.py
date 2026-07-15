@@ -134,7 +134,10 @@ app.layout = html.Div([
             dbc.Col(kpi_card("Avg Daily Launches",   "kpi-launches"), xs=6, md=3),
             dbc.Col(kpi_card("Launch Reduction",    "kpi-drop"),     xs=6, md=3),
             dbc.Col(kpi_card("Station No Longer Reporting",  "kpi-silent"),   xs=6, md=3),
-        ], className="mb-4"),
+        ], className="mb-2"),
+
+        # Per-cycle KPI breakdown
+        html.Div(id="kpi-by-cycle", className="mb-4"),
 
         # Tabs
         dcc.Tabs(
@@ -148,6 +151,8 @@ app.layout = html.Div([
                         className="nav-tab", selected_className="nav-tab--selected"),
                 dcc.Tab(label="📊 Rankings",       value="tab-rankings",
                         className="nav-tab", selected_className="nav-tab--selected"),
+                dcc.Tab(label="🕐 Reporting Rate", value="tab-cycles",
+                        className="nav-tab", selected_className="nav-tab--selected"),
             ],
             style={"marginBottom": "20px"},
         ),
@@ -156,8 +161,24 @@ app.layout = html.Div([
 
         # Time Series
         html.Div(id="panel-timeseries", children=[
-            html.Div("Daily radiosonde launches across the US network",
-                     className="section-header"),
+            html.Div([
+                html.Div("Daily radiosonde launches across the US network",
+                         className="section-header", style={"marginBottom": 0}),
+                dcc.Dropdown(
+                    id="ts-cycle",
+                    options=[
+                        {"label": "All cycles (combined)", "value": "all"},
+                        {"label": "00Z", "value": "0"},
+                        {"label": "06Z", "value": "6"},
+                        {"label": "12Z", "value": "12"},
+                        {"label": "18Z", "value": "18"},
+                    ],
+                    value="all",
+                    clearable=False,
+                    style={"width": "220px", "fontSize": "0.85rem"},
+                ),
+            ], style={"display": "flex", "justifyContent": "space-between",
+                       "alignItems": "center", "marginBottom": "12px"}),
             graph_card("fig-timeseries", height=460),
         ]),
 
@@ -216,7 +237,9 @@ app.layout = html.Div([
                         id="map-cycle",
                         options=[
                             {"label": "00Z", "value": 0},
+                            {"label": "06Z", "value": 6},
                             {"label": "12Z", "value": 12},
+                            {"label": "18Z", "value": 18},
                         ],
                         value=0,
                         clearable=False,
@@ -270,6 +293,15 @@ app.layout = html.Div([
             ]),
         ], style={"display": "none"}),
 
+        # Reporting Rate (by cycle x window)
+        html.Div(id="panel-cycles", children=[
+            html.Div(
+                "Network-wide reporting rate by launch cycle, across rolling windows",
+                className="section-header",
+            ),
+            graph_card("fig-cycles", height=380),
+        ], style={"display": "none"}),
+
     ], style={"padding": "24px 28px"}),
 
     # Footer
@@ -299,11 +331,12 @@ app.layout = html.Div([
     Output("panel-map",        "style"),
     Output("panel-impact",     "style"),
     Output("panel-rankings",   "style"),
+    Output("panel-cycles",     "style"),
     Input("tabs", "value"),
 )
 def show_panel(tab):
     """Show only the active tab panel, hide the rest."""
-    panels = ["tab-timeseries", "tab-map", "tab-impact", "tab-rankings"]
+    panels = ["tab-timeseries", "tab-map", "tab-impact", "tab-rankings", "tab-cycles"]
     return [
         {"display": "block"} if tab == p else {"display": "none"}
         for p in panels
@@ -315,6 +348,7 @@ def show_panel(tab):
     Output("kpi-launches", "children"),
     Output("kpi-drop",     "children"),
     Output("kpi-silent",   "children"),
+    Output("kpi-by-cycle", "children"),
     Input("tabs", "value"),
 )
 def update_kpis(_):
@@ -330,26 +364,52 @@ def update_kpis(_):
         drop_pct = ((post_avg - pre_avg) / pre_avg * 100) if pre_avg else 0
         grounded = (delta["post_cut"] == 0).sum()
 
+        by_cycle = queries.launch_delta_by_cycle()
+        cycle_cards = []
+        for _, r in by_cycle.iterrows():
+            pct = r["pct_change"]
+            pct_text = f"{pct:+.1f}%" if pd.notna(pct) else "N/A"
+            pct_color = C["muted"] if pd.isna(pct) else (C["red"] if pct < 0 else C["green"])
+            cycle_cards.append(
+                html.Div([
+                    html.Div(r["cycle"], style={"fontSize": "0.78rem", "color": C["muted"],
+                                                 "fontWeight": "600", "marginBottom": "4px"}),
+                    html.Div(f"{r['pre_avg']:.0f} → {r['post_avg']:.0f}",
+                             style={"fontSize": "1rem", "fontWeight": "700"}),
+                    html.Div(pct_text, style={"fontSize": "0.85rem", "color": pct_color}),
+                ], style={
+                    "background": C["surface"], "border": f"1px solid {C['border']}",
+                    "borderRadius": "6px", "padding": "10px 14px", "textAlign": "center",
+                    "flex": "1",
+                })
+            )
+        cycle_row = html.Div(cycle_cards, style={"display": "flex", "gap": "10px"})
+
         return (
             str(active),
             f"{pre_avg:.0f} → {post_avg:.0f}",
             f"{drop_pct:+.1f}%",
             str(grounded),
+            cycle_row,
         )
     except Exception:
-        return "—", "—", "—", "—"
+        return "—", "—", "—", "—", ""
 
 
 @app.callback(
     Output("fig-timeseries", "figure"),
     Input("tabs", "value"),
+    Input("ts-cycle", "value"),
 )
-def update_timeseries(_):
+def update_timeseries(_, cycle):
     try:
-        df = queries.daily_launch_counts()
+        selected = None if cycle in (None, "all") else cycle
+        df = queries.daily_launch_counts(cycle=selected)
         df["date"] = pd.to_datetime(df["date"], utc=True)
         df = df[df["date"] < df["date"].max()]
         df["rolling_7d"] = df["total_launches"].rolling(7, center=True, min_periods=1).mean()
+
+        cycle_label = "All Cycles Combined" if selected is None else f"{int(selected):02d}Z Cycle"
 
         fig = go.Figure()
 
@@ -398,7 +458,7 @@ def update_timeseries(_):
             )
 
         fig.update_layout(
-            title=dict(text="US Radiosonde Launches 2025 - Present",
+            title=dict(text=f"US Radiosonde Launches 2025 - Present ({cycle_label})",
                        font=dict(size=17, weight=700), x=0),
             yaxis=dict(
                 title="Launches per day",
@@ -710,6 +770,49 @@ def update_rankings(tab):
 
     except Exception as e:
         return empty_fig(f"Error: {e}"), "", "", {"height": "600px"}
+
+
+@app.callback(
+    Output("fig-cycles", "figure"),
+    Input("tabs", "value"),
+)
+def update_cycles(tab):
+    if tab != "tab-cycles":
+        return empty_fig()
+    try:
+        df = queries.network_reporting_by_cycle_window()
+
+        window_order = ["3 Month", "6 Month", "1 Year", "Total"]
+        cycle_order  = ["00Z", "06Z", "12Z", "18Z"]
+        pivot = df.pivot(index="cycle", columns="window", values="reporting_rate")
+        pivot = pivot.reindex(index=cycle_order, columns=window_order)
+
+        fig = go.Figure(go.Heatmap(
+            z=pivot.values,
+            x=pivot.columns,
+            y=pivot.index,
+            colorscale=[[0, C["red"]], [0.5, C["yellow"]], [1, C["green"]]],
+            zmin=0, zmax=100,
+            text=[[f"{v:.1f}%" for v in row] for row in pivot.values],
+            texttemplate="%{text}",
+            textfont=dict(size=15, color=C["bg"]),
+            hovertemplate="<b>%{y} — %{x}</b><br>Reporting rate: %{z:.1f}%<extra></extra>",
+            colorbar=dict(title="Rate %", tickfont=dict(color=C["text"])),
+        ))
+        fig.update_layout(
+            title=dict(text="Network Reporting Rate by Cycle and Window",
+                       font=dict(size=16, weight=700)),
+            xaxis=dict(side="top", gridcolor=C["border"]),
+            yaxis=dict(gridcolor=C["border"], autorange="reversed"),
+            paper_bgcolor=C["bg"],
+            plot_bgcolor=C["surface"],
+            font=dict(color=C["text"], family="Inter, Segoe UI, sans-serif", size=13),
+            margin=dict(l=70, r=20, t=80, b=20),
+        )
+        return fig
+
+    except Exception as e:
+        return empty_fig(f"Error: {e}")
 
 
 # Temporary debug route — remove after confirming versions

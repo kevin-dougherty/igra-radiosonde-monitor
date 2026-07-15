@@ -3,6 +3,8 @@ import pandas as pd
 from pathlib import Path
 
 DB_PATH = Path("data/igra.duckdb")
+IMPACT_DATE = "2025-03-01"
+IMPACT_TS   = pd.Timestamp(IMPACT_DATE, tz="UTC")
 
 def get_connection():
     con = duckdb.connect(str(DB_PATH), read_only=True)
@@ -10,18 +12,36 @@ def get_connection():
     con.execute("SET threads=2")
     return con
 
-def daily_launch_counts() -> pd.DataFrame:
+CYCLE_HOURS = [0, 6, 12, 18]
+
+def _cycle_to_hour(cycle) -> int | None:
+    """Normalize a cycle value ('00Z', '00', 0, None) to an int hour or None."""
+    if cycle is None:
+        return None
+    if isinstance(cycle, str):
+        cycle = cycle.upper().replace("Z", "")
+    return int(cycle)
+
+def daily_launch_counts(cycle=None) -> pd.DataFrame:
+    """
+    Daily launch counts. If cycle is None, all synoptic hours are combined.
+    Pass a cycle (0, 6, 12, or 18 — or '00Z' etc.) to filter to one launch time.
+    """
     con = get_connection()
-    return con.execute("""
+    hour = _cycle_to_hour(cycle)
+    hour_filter = "AND EXTRACT(hour FROM timezone('UTC', time)) = ?" if hour is not None else ""
+    params = [hour] if hour is not None else []
+    return con.execute(f"""
         SELECT
             DATE_TRUNC('day', timezone('UTC', time)) AS date,
             COUNT(*) AS total_launches,
             COUNT(DISTINCT station) AS stations_reporting
         FROM soundings
         WHERE time >= '2025-01-01'
+        {hour_filter}
         GROUP BY 1
         ORDER BY 1
-    """).df()
+    """, params).df()
 
 def station_names() -> pd.DataFrame:
     con = get_connection()
@@ -156,6 +176,64 @@ def launch_status_for_cycle(year: int, month: int, day: int, hour: int) -> pd.Da
 
     all_stations["launched"] = all_stations["station"].isin(launched["station"])
     return all_stations
+
+def network_reporting_by_cycle_window() -> pd.DataFrame:
+    """
+    Network-wide reporting rate for each synoptic cycle (00Z/06Z/12Z/18Z),
+    across rolling windows: 3 month, 6 month, 1 year, and the full monitoring
+    period (since 2025-01-01). Each cycle has one possible launch per station
+    per day, so the denominator is (n_stations * days_in_window).
+    """
+    con = get_connection()
+    windows = [("3 Month", 90), ("6 Month", 180), ("1 Year", 365), ("Total", None)]
+
+    n_stations = con.execute("SELECT COUNT(*) FROM station_meta").fetchone()[0] or 1
+
+    rows = []
+    for cycle in CYCLE_HOURS:
+        for label, days in windows:
+            start_expr = "'2025-01-01'" if days is None else f"CURRENT_DATE - INTERVAL '{days} days'"
+            launches, expected_days = con.execute(f"""
+                SELECT
+                    COUNT(*) FILTER (
+                        WHERE timezone('UTC', time) >= {start_expr}
+                          AND EXTRACT(hour FROM timezone('UTC', time)) = ?
+                    ) AS launches,
+                    GREATEST(DATEDIFF('day', {start_expr}, CURRENT_DATE), 1) AS expected_days
+                FROM soundings
+            """, [cycle]).fetchone()
+            rate = (launches / (n_stations * expected_days)) * 100
+            rows.append({
+                "cycle": f"{cycle:02d}Z",
+                "window": label,
+                "reporting_rate": rate,
+                "launches": launches,
+            })
+
+    return pd.DataFrame(rows)
+
+def launch_delta_by_cycle() -> pd.DataFrame:
+    """
+    Network-wide avg daily launches before/after the impact date, split by
+    synoptic cycle. Uses the full pre/post period mean — same methodology
+    as the top-level KPI cards, just filtered per cycle.
+    """
+    rows = []
+    for cycle in CYCLE_HOURS:
+        df = daily_launch_counts(cycle=cycle)
+        df["date"] = pd.to_datetime(df["date"], utc=True)
+        pre_avg  = df[df["date"] < IMPACT_TS]["total_launches"].mean()
+        post_avg = df[df["date"] >= IMPACT_TS]["total_launches"].mean()
+        pre_avg  = pre_avg  if pd.notna(pre_avg)  else 0
+        post_avg = post_avg if pd.notna(post_avg) else 0
+        pct = ((post_avg - pre_avg) / pre_avg * 100) if pre_avg else None
+        rows.append({
+            "cycle": f"{cycle:02d}Z",
+            "pre_avg": pre_avg,
+            "post_avg": post_avg,
+            "pct_change": pct,
+        })
+    return pd.DataFrame(rows)
 
 def main() -> None:
     print("Daily launch counts:")

@@ -51,7 +51,8 @@ jobs:
             --start-month 1 \
             --db data/igra.duckdb \
             --workers 4 \
-            --mode launches
+            --mode launches \
+            --all-hours
 
       - name: Load station metadata
         run: python load_metadata.py --db data/igra.duckdb
@@ -65,10 +66,3 @@ jobs:
           aws s3 cp data/igra.duckdb s3://igra-database/igra.duckdb \
             --endpoint-url ${{ secrets.R2_ENDPOINT_URL }}
           echo "Upload complete"
-
-      - name: Restart Render service to pick up new database
-        run: |
-          curl -X POST "https://api.render.com/v1/services/${{ secrets.RENDER_SERVICE_ID }}/restart" \
-            -H "Authorization: Bearer ${{ secrets.RENDER_API_KEY }}" \
-            -H "Accept: application/json"
-
