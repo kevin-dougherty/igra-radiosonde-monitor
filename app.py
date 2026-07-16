@@ -297,13 +297,12 @@ app.layout = html.Div([
                     dcc.Dropdown(
                         id="rr-cycle",
                         options=[
-                            {"label": "All cycles (combined)", "value": "all"},
                             {"label": "00Z", "value": "0"},
                             {"label": "06Z", "value": "6"},
                             {"label": "12Z", "value": "12"},
                             {"label": "18Z", "value": "18"},
                         ],
-                        value="all",
+                        value="0",
                         clearable=False,
                         style={"fontSize": "0.85rem"},
                     ),
