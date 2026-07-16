@@ -48,12 +48,40 @@ MISSING = {-9999, -8888, -99999}
 
 # ── Directory selection ───────────────────────────────────────────────────────
 
+# NCEI rotates the "beg{year}" suffix on the data-y2d files at some point in
+# each year, but not on a fixed, predictable schedule (observed rotating to
+# beg2026 on 2026-07-15, mid-year — not on Jan 1 as originally assumed).
+# Rather than hardcode an offset that silently breaks every station at once
+# when NCEI rotates again, probe for the live suffix against a station that's
+# essentially guaranteed to exist (Key West), and cache the result per run.
+_PROBE_STATION = "USM00072201"
+
+def _resolve_ytd_suffix(timeout: int = 15) -> str:
+    """Find the current live '-data-beg{year}.txt.zip' suffix by probing
+    candidate years, newest first, with a lightweight HEAD request."""
+    now = datetime.now(UTC)
+    for beg_year in (now.year, now.year - 1, now.year - 2):
+        suffix = f"-data-beg{beg_year}.txt.zip"
+        url = f"{BASE_URL_YTD}/{_PROBE_STATION}{suffix}"
+        try:
+            resp = requests.head(url, timeout=timeout, allow_redirects=True)
+            if resp.status_code == 200:
+                return suffix
+        except requests.RequestException:
+            continue
+    raise RuntimeError(
+        "Could not find a live data-y2d suffix (tried "
+        f"{now.year}, {now.year - 1}, {now.year - 2}). "
+        "NCEI's directory layout or naming convention may have changed — "
+        "check https://www.ncei.noaa.gov/pub/data/igra/data/data-y2d/ manually."
+    )
+
+
 def _choose_source(start: datetime) -> tuple[str, str, str]:
     now = datetime.now(UTC)
     ytd_cutoff = datetime(now.year - 1, 1, 1, tzinfo=UTC)
-    beg_year = now.year - 1
     if start >= ytd_cutoff:
-        suffix = f"-data-beg{beg_year}.txt.zip"
+        suffix = _resolve_ytd_suffix()
         return BASE_URL_YTD, suffix, f"data-y2d ({suffix})"
     else:
         return BASE_URL_POR, "-data.txt.zip", "data-por (full history — may be slow)"
@@ -360,8 +388,8 @@ def run(
                 tqdm.write(f"  ✗  {station}: {e}")
 
     if not pieces:
-        print("No data fetched.")
-        return
+        print("No data fetched from any station — aborting without writing to the database.")
+        raise SystemExit(1)
 
     df_all = pd.concat(pieces, ignore_index=True)
     print(f"\n  Parsed {len(df_all):,} rows from {df_all['station'].nunique()} stations")
