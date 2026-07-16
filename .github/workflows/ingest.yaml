@@ -57,6 +57,39 @@ jobs:
       - name: Load station metadata
         run: python load_metadata.py --db data/igra.duckdb
 
+      - name: Verify database before publishing
+        run: |
+          python3 -c "
+          import duckdb, sys
+
+          MIN_ROWS = 50000  # well below normal (~80K+), well above 'empty'
+
+          con = duckdb.connect('data/igra.duckdb', read_only=True)
+          tables = con.execute('SHOW TABLES').fetchdf()['name'].tolist()
+
+          if 'soundings' not in tables:
+              print('FAIL: soundings table does not exist.')
+              sys.exit(1)
+
+          count = con.execute('SELECT COUNT(*) FROM soundings').fetchone()[0]
+          print(f'soundings row count: {count:,}')
+          if count < MIN_ROWS:
+              print(f'FAIL: only {count:,} rows, expected at least {MIN_ROWS:,}.')
+              sys.exit(1)
+
+          if 'station_meta' not in tables:
+              print('FAIL: station_meta table does not exist.')
+              sys.exit(1)
+
+          meta_count = con.execute('SELECT COUNT(*) FROM station_meta').fetchone()[0]
+          print(f'station_meta row count: {meta_count:,}')
+          if meta_count < 50:
+              print(f'FAIL: only {meta_count:,} stations in station_meta, expected 90+.')
+              sys.exit(1)
+
+          print('OK: database looks healthy, safe to publish.')
+          "
+
       - name: Upload updated database to R2
         env:
           AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
