@@ -134,10 +134,7 @@ app.layout = html.Div([
             dbc.Col(kpi_card("Avg Daily Launches",   "kpi-launches"), xs=6, md=3),
             dbc.Col(kpi_card("Launch Reduction",    "kpi-drop"),     xs=6, md=3),
             dbc.Col(kpi_card("Station No Longer Reporting",  "kpi-silent"),   xs=6, md=3),
-        ], className="mb-2"),
-
-        # Per-cycle KPI breakdown
-        html.Div(id="kpi-by-cycle", className="mb-4"),
+        ], className="mb-4"),
 
         # Tabs
         dcc.Tabs(
@@ -145,13 +142,13 @@ app.layout = html.Div([
             children=[
                 dcc.Tab(label="📈 Time Series",    value="tab-timeseries",
                         className="nav-tab", selected_className="nav-tab--selected"),
+                dcc.Tab(label="🕐 Reporting Rate", value="tab-cycles",
+                        className="nav-tab", selected_className="nav-tab--selected"),
                 dcc.Tab(label="🗺  Station Map",   value="tab-map",
                         className="nav-tab", selected_className="nav-tab--selected"),
                 dcc.Tab(label="✂  Station Impact", value="tab-impact",
                         className="nav-tab", selected_className="nav-tab--selected"),
                 dcc.Tab(label="📊 Rankings",       value="tab-rankings",
-                        className="nav-tab", selected_className="nav-tab--selected"),
-                dcc.Tab(label="🕐 Reporting Rate", value="tab-cycles",
                         className="nav-tab", selected_className="nav-tab--selected"),
             ],
             style={"marginBottom": "20px"},
@@ -374,7 +371,6 @@ def show_panel(tab):
     Output("kpi-launches", "children"),
     Output("kpi-drop",     "children"),
     Output("kpi-silent",   "children"),
-    Output("kpi-by-cycle", "children"),
     Input("tabs", "value"),
 )
 def update_kpis(_):
@@ -390,36 +386,14 @@ def update_kpis(_):
         drop_pct = ((post_avg - pre_avg) / pre_avg * 100) if pre_avg else 0
         grounded = (delta["post_cut"] == 0).sum()
 
-        by_cycle = queries.launch_delta_by_cycle()
-        cycle_cards = []
-        for _, r in by_cycle.iterrows():
-            pct = r["pct_change"]
-            pct_text = f"{pct:+.1f}%" if pd.notna(pct) else "N/A"
-            pct_color = C["muted"] if pd.isna(pct) else (C["red"] if pct < 0 else C["green"])
-            cycle_cards.append(
-                html.Div([
-                    html.Div(r["cycle"], style={"fontSize": "0.78rem", "color": C["muted"],
-                                                 "fontWeight": "600", "marginBottom": "4px"}),
-                    html.Div(f"{r['pre_avg']:.0f} → {r['post_avg']:.0f}",
-                             style={"fontSize": "1rem", "fontWeight": "700"}),
-                    html.Div(pct_text, style={"fontSize": "0.85rem", "color": pct_color}),
-                ], style={
-                    "background": C["surface"], "border": f"1px solid {C['border']}",
-                    "borderRadius": "6px", "padding": "10px 14px", "textAlign": "center",
-                    "flex": "1",
-                })
-            )
-        cycle_row = html.Div(cycle_cards, style={"display": "flex", "gap": "10px"})
-
         return (
             str(active),
             f"{pre_avg:.0f} → {post_avg:.0f}",
             f"{drop_pct:+.1f}%",
             str(grounded),
-            cycle_row,
         )
     except Exception:
-        return "—", "—", "—", "—", ""
+        return "—", "—", "—", "—"
 
 
 @app.callback(
