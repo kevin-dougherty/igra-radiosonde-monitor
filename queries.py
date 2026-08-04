@@ -74,22 +74,58 @@ def station_summary() -> pd.DataFrame:
     """).df()
 
 def station_reporting() -> pd.DataFrame:
+    """
+    Per-station reporting rate, graded against each station's own actual
+    cycle roster rather than a flat 2/day assumption. Some stations
+    (e.g. Barrow, AK) genuinely run all four synoptic cycles as routine
+    operations, not just 00Z/12Z — scoring them against a 2/day target
+    made healthy stations read as high as ~200%. A cycle counts toward a
+    station's roster if it accounts for at least 10% of the days elapsed
+    (a real, recurring cycle) rather than occasional/rare activity.
+    """
     con = get_connection()
     return con.execute("""
+        WITH days AS (
+            SELECT GREATEST(DATEDIFF('day', '2025-01-01', CURRENT_DATE), 1) AS n
+        ),
+        cycle_counts AS (
+            SELECT
+                s.station,
+                COUNT(*) FILTER (WHERE EXTRACT(hour FROM timezone('UTC', s.time)) = 0)  AS n00,
+                COUNT(*) FILTER (WHERE EXTRACT(hour FROM timezone('UTC', s.time)) = 6)  AS n06,
+                COUNT(*) FILTER (WHERE EXTRACT(hour FROM timezone('UTC', s.time)) = 12) AS n12,
+                COUNT(*) FILTER (WHERE EXTRACT(hour FROM timezone('UTC', s.time)) = 18) AS n18,
+                COUNT(*) AS total_launches,
+                MIN(s.lat) AS lat,
+                MIN(s.lon) AS lon,
+                MAX(DATE_TRUNC('day', s.time)) AS last_launch
+            FROM soundings s
+            WHERE s.time >= '2025-01-01'
+            GROUP BY s.station
+        ),
+        roster AS (
+            SELECT
+                c.*,
+                (CASE WHEN n00 >= 0.10 * d.n THEN 1 ELSE 0 END +
+                 CASE WHEN n06 >= 0.10 * d.n THEN 1 ELSE 0 END +
+                 CASE WHEN n12 >= 0.10 * d.n THEN 1 ELSE 0 END +
+                 CASE WHEN n18 >= 0.10 * d.n THEN 1 ELSE 0 END) AS roster_size,
+                d.n AS days_elapsed
+            FROM cycle_counts c
+            CROSS JOIN days d
+        )
         SELECT
-            s.station,
-            COALESCE(m.display_name, s.station) AS display_name,
-            COALESCE(m.display_name, s.station) || ' (' || s.station || ')' AS label,
-            MIN(s.lat) AS lat,
-            MIN(s.lon) AS lon,
-            COUNT(*) AS total_launches,
-            MAX(DATE_TRUNC('day', s.time)) AS last_launch,
-            (COUNT(*) /
-             NULLIF(DATEDIFF('day', '2025-01-01', CURRENT_DATE) * 2.0, 0)) * 100 AS reporting_rate
-        FROM soundings s
-        LEFT JOIN station_meta m ON s.station = m.station_id
-        WHERE s.time >= '2025-01-01'
-        GROUP BY s.station, m.display_name
+            r.station,
+            COALESCE(m.display_name, r.station) AS display_name,
+            COALESCE(m.display_name, r.station) || ' (' || r.station || ')' AS label,
+            r.lat,
+            r.lon,
+            r.total_launches,
+            r.last_launch,
+            (r.total_launches /
+             NULLIF(GREATEST(r.roster_size, 1) * r.days_elapsed, 0)) * 100 AS reporting_rate
+        FROM roster r
+        LEFT JOIN station_meta m ON r.station = m.station_id
         ORDER BY reporting_rate DESC
     """).df()
 
